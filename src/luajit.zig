@@ -38,11 +38,175 @@ const Lua = struct {
             return LuaErrors.FailedToCallChunk;
         }
     }
+    pub fn setGlobal(self: *Lua, name: [*:0]const u8) void {
+        c.lua_setglobal(self.L, name);
+    }
+    pub fn getGlobal(self: *Lua, name: [*:0]const u8) void {
+        c.lua_getglobal(self.L, name);
+    }
+    pub fn pushFunc(self: *Lua, f: c.lua_CFunction) void {
+        c.lua_pushcfunction(self.L, f);
+    }
 
-    pub fn readField(self: *Lua, comptime T: type, field: []const u8) !T {
+    fn readField(self: *Lua, comptime T: type, field: []const u8) !T {
         c.lua_getfield(self.L, -1, @ptrCast(field));
         defer _ = c.lua_pop(self.L, 1); // Clean up the stack after reading
         return try self.read(T);
+    }
+
+    pub fn pop(self: *Lua, comptime T: type) !T {
+        const res = try self.read(T);
+        c.lua_pop(self.L, 1);
+        return res;
+    }
+
+    pub fn push(self: *Lua, t: anytype) void {
+        const T = @TypeOf(t);
+        switch (T) {
+            // String types
+            []const u8 => {
+                c.lua_pushlstring(self.L, t.ptr, t.len);
+            },
+            [*c]const u8 => {
+                c.lua_pushstring(self.L, t);
+            },
+            *const [*c]const u8 => {
+                c.lua_pushstring(self.L, t.*);
+            },
+
+            // Boolean
+            bool => {
+                c.lua_pushboolean(self.L, if (t) 1 else 0);
+            },
+
+            // Signed integers - convert to Lua number
+            i8 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            i16 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            i32 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            i64 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            isize => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+            c_int => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            c_long => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+            c_longlong => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+
+            // Unsigned integers - convert to Lua number
+            u8 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            u16 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            u32 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            u64 => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+            usize => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+            c_uint => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, t));
+            },
+            c_ulong => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+            c_ulonglong => {
+                c.lua_pushinteger(self.L, @as(c.lua_Integer, @intCast(t)));
+            },
+
+            // Floating point types
+            f32 => {
+                c.lua_pushnumber(self.L, @as(f64, t));
+            },
+            f64 => {
+                c.lua_pushnumber(self.L, t);
+            },
+
+            // Pointer types
+            ?*anyopaque => {
+                if (t) |ptr| {
+                    c.lua_pushlightuserdata(self.L, ptr);
+                } else {
+                    c.lua_pushnil(self.L);
+                }
+            },
+            *anyopaque => {
+                c.lua_pushlightuserdata(self.L, t);
+            },
+            ?*c.struct_lua_State => {
+                if (t) |thread| {
+                    c.lua_pushthread(thread);
+                } else {
+                    c.lua_pushnil(self.L);
+                }
+            },
+            *c.struct_lua_State => {
+                c.lua_pushthread(t);
+            },
+            ?*const anyopaque => {
+                if (t) |ptr| {
+                    c.lua_pushlightuserdata(self.L, @constCast(ptr));
+                } else {
+                    c.lua_pushnil(self.L);
+                }
+            },
+            *const anyopaque => {
+                c.lua_pushlightuserdata(self.L, @constCast(t));
+            },
+            c.lua_CFunction => {
+                c.lua_pushcfunction(self.L, t);
+            },
+            ?c.lua_CFunction => {
+                if (t) |func| {
+                    c.lua_pushcfunction(self.L, func);
+                } else {
+                    c.lua_pushnil(self.L);
+                }
+            },
+
+            // Optional types - handle nil case
+            else => switch (@typeInfo(T)) {
+                .Optional => |_| {
+                    if (t) |value| {
+                        self.push(value);
+                    } else {
+                        c.lua_pushnil(self.L);
+                    }
+                },
+                .Pointer => |ptr_info| {
+                    // Handle generic pointer types
+                    if (ptr_info.size == .one) {
+                        if (ptr_info.is_const) {
+                            c.lua_pushlightuserdata(self.L, @constCast(t));
+                        } else {
+                            c.lua_pushlightuserdata(self.L, t);
+                        }
+                    } else {
+                        @compileError("Unsupported pointer type: " ++ @typeName(T));
+                    }
+                },
+                else => {
+                    @compileError("Unsupported type for push: " ++ @typeName(T));
+                },
+            },
+        }
     }
 
     pub fn read(self: *Lua, comptime T: type) !T {
@@ -139,13 +303,36 @@ const Lua = struct {
         const c_str = c.lua_tolstring(self.L, -1, len);
         return std.mem.span(c_str);
     }
+    export fn printz(l: ?*c.struct_lua_State) c_int {
+        const n = c.lua_gettop(l);
+        if (n == 0) {
+            c.lua_pushliteral(l, "wrong number of args");
+            _ = c.lua_error(l);
+        }
+        if (c.lua_isstring(l, 1) == 0) {
+            c.lua_pushliteral(l, "s should be a string");
+            _ = c.lua_error(l);
+        }
+        const len: [*c]usize = null;
+        const s = c.lua_tolstring(l, 1, len);
+        std.debug.print("{s}\n", .{std.mem.span(s)});
+        return 0;
+    }
 };
+
+test "setting global function and call" {
+    var l: Lua = .{};
+    try l.init();
+    l.pushFunc(Lua.printz);
+    l.setGlobal("Printz");
+    try l.loadFile("./lua/set_global_function.lua");
+}
 
 test "structural typing" {
     var l: Lua = .{};
     try l.init();
     try l.loadFile("./lua/global_table.lua");
-    c.lua_getglobal(l.L, "T");
+    l.getGlobal("T");
     const T = struct { c: usize = 0, e: f64 = 0.0 };
     var t: T = .{};
     try l.readTable(&t);
