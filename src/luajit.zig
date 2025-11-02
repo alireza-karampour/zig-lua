@@ -130,17 +130,7 @@ const Lua = struct {
         const fields = comptime @typeInfo(info.pointer.child).@"struct".fields;
 
         inline for (fields) |f| {
-            switch (@typeInfo(f.type)) {
-                .float => {
-                    @field(table.*, f.name) = try self.readField(f64, f.name);
-                },
-                .int => {
-                    @field(table.*, f.name) = try self.readField(usize, f.name);
-                },
-                else => {
-                    return LuaErrors.FieldTypeNotImpleneted;
-                },
-            }
+            @field(table.*, f.name) = try self.readField(f.type, f.name);
         }
     }
 
