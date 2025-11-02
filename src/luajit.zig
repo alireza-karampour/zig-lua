@@ -131,6 +131,9 @@ const Lua = struct {
 
         inline for (fields) |f| {
             switch (@typeInfo(f.type)) {
+                .float => {
+                    @field(table.*, f.name) = try self.readField(f64, f.name);
+                },
                 .int => {
                     @field(table.*, f.name) = try self.readField(usize, f.name);
                 },
@@ -153,10 +156,11 @@ test "structural typing" {
     try l.init();
     try l.loadFile("./lua/global_table.lua");
     c.lua_getglobal(l.L, "T");
-    const T = struct { c: usize = 0 };
+    const T = struct { c: usize = 0, e: f64 = 0.0 };
     var t: T = .{};
     try l.readTable(&t);
     try std.testing.expect(t.c == 77);
+    try std.testing.expect(t.e == 7.7);
     std.debug.print("{any}\n", .{t});
 }
 
