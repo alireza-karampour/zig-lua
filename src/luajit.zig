@@ -11,6 +11,8 @@ pub const LuaErrors = error{
     FailedToLoadFile,
     FailedToCallChunk,
     FailedToReadField,
+    WrongInputType,
+    FieldTypeNotImpleneted,
 };
 
 const Lua = struct {
@@ -114,12 +116,49 @@ const Lua = struct {
         };
     }
 
+    fn readTable(self: *Lua, table: anytype) !void {
+        const info = @typeInfo(@TypeOf(table));
+        if (info != .pointer) {
+            @compileError("table should be a pointer to a table");
+        }
+        if (@typeInfo(info.pointer.child) != .@"struct") {
+            @compileError("pointee should be struct");
+        }
+        if (info.pointer.is_const) {
+            @compileError("pointee should not be const");
+        }
+        const fields = comptime @typeInfo(info.pointer.child).@"struct".fields;
+
+        inline for (fields) |f| {
+            switch (@typeInfo(f.type)) {
+                .int => {
+                    @field(table.*, f.name) = try self.readField(usize, f.name);
+                },
+                else => {
+                    return LuaErrors.FieldTypeNotImpleneted;
+                },
+            }
+        }
+    }
+
     fn readString(self: *@This()) ![]const u8 {
         const len: [*c]usize = null;
         const c_str = c.lua_tolstring(self.L, -1, len);
         return std.mem.span(c_str);
     }
 };
+
+test "structural typing" {
+    var l: Lua = .{};
+    try l.init();
+    try l.loadFile("./lua/global_table.lua");
+    c.lua_getglobal(l.L, "T");
+    const T = struct { c: usize = 0 };
+    var t: T = .{};
+    try l.readTable(&t);
+    try std.testing.expect(t.c == 77);
+    std.debug.print("{any}\n", .{t});
+}
 
 test "read field value" {
     var l: Lua = .{};
